@@ -1,12 +1,9 @@
-// ============================================
-// Все типы проекта — v3 с поддержкой юзербота
-// ============================================
-
 export interface Env {
   DB: D1Database;
   AI: Ai;
   TELEGRAM_BOT_TOKEN: string;
   GROQ_API_KEY: string;
+  GROQ_API_KEY_2: string;
   WEBHOOK_SECRET: string;
   MY_TELEGRAM_ID: string;
   WORKER_API_SECRET: string;
@@ -14,38 +11,33 @@ export interface Env {
   TIMEZONE_OFFSET: string;
 }
 
-// ============================================
-// Telegram Types
-// ============================================
-
-export interface TelegramUpdate {
+export interface TgUpdate {
   update_id: number;
-  message?: TelegramMessage;
-  business_message?: TelegramMessage;
-  edited_message?: TelegramMessage;
-  callback_query?: TelegramCallbackQuery;
-  business_connection?: TelegramBusinessConnection;
+  message?: TgMessage;
+  business_message?: TgMessage;
+  callback_query?: TgCallbackQuery;
+  business_connection?: TgBusinessConnection;
 }
 
-export interface TelegramMessage {
+export interface TgMessage {
   message_id: number;
-  from?: TelegramUser;
-  chat: TelegramChat;
+  from?: TgUser;
+  chat: TgChat;
   date: number;
   text?: string;
-  voice?: TelegramVoice;
-  audio?: TelegramAudio;
-  photo?: TelegramPhotoSize[];
-  video?: TelegramVideo;
-  document?: TelegramDocument;
-  sticker?: TelegramSticker;
+  voice?: TgVoice;
+  audio?: TgAudio;
+  photo?: TgPhoto[];
+  video?: TgVideo;
+  document?: TgDocument;
+  sticker?: TgSticker;
   caption?: string;
-  reply_to_message?: TelegramMessage;
-  entities?: TelegramEntity[];
+  reply_to_message?: TgMessage;
+  entities?: TgEntity[];
   business_connection_id?: string;
 }
 
-export interface TelegramUser {
+export interface TgUser {
   id: number;
   is_bot: boolean;
   first_name: string;
@@ -54,7 +46,7 @@ export interface TelegramUser {
   language_code?: string;
 }
 
-export interface TelegramChat {
+export interface TgChat {
   id: number;
   type: 'private' | 'group' | 'supergroup' | 'channel';
   title?: string;
@@ -63,7 +55,7 @@ export interface TelegramChat {
   username?: string;
 }
 
-export interface TelegramVoice {
+export interface TgVoice {
   file_id: string;
   file_unique_id: string;
   duration: number;
@@ -71,7 +63,7 @@ export interface TelegramVoice {
   file_size?: number;
 }
 
-export interface TelegramAudio {
+export interface TgAudio {
   file_id: string;
   file_unique_id: string;
   duration: number;
@@ -79,7 +71,7 @@ export interface TelegramAudio {
   file_size?: number;
 }
 
-export interface TelegramPhotoSize {
+export interface TgPhoto {
   file_id: string;
   file_unique_id: string;
   width: number;
@@ -87,7 +79,7 @@ export interface TelegramPhotoSize {
   file_size?: number;
 }
 
-export interface TelegramVideo {
+export interface TgVideo {
   file_id: string;
   file_unique_id: string;
   width: number;
@@ -97,7 +89,7 @@ export interface TelegramVideo {
   file_size?: number;
 }
 
-export interface TelegramDocument {
+export interface TgDocument {
   file_id: string;
   file_unique_id: string;
   file_name?: string;
@@ -105,7 +97,7 @@ export interface TelegramDocument {
   file_size?: number;
 }
 
-export interface TelegramSticker {
+export interface TgSticker {
   file_id: string;
   file_unique_id: string;
   width: number;
@@ -115,54 +107,49 @@ export interface TelegramSticker {
   set_name?: string;
 }
 
-export interface TelegramEntity {
+export interface TgEntity {
   type: string;
   offset: number;
   length: number;
   url?: string;
-  user?: TelegramUser;
+  user?: TgUser;
 }
 
-export interface TelegramCallbackQuery {
+export interface TgCallbackQuery {
   id: string;
-  from: TelegramUser;
-  message?: TelegramMessage;
+  from: TgUser;
+  message?: TgMessage;
   data?: string;
 }
 
-export interface TelegramBusinessConnection {
+export interface TgBusinessConnection {
   id: string;
-  user: TelegramUser;
+  user: TgUser;
   user_chat_id: number;
   date: number;
   can_reply: boolean;
   is_enabled: boolean;
 }
 
-export interface TelegramFile {
+export interface TgFile {
   file_id: string;
   file_unique_id: string;
   file_size?: number;
   file_path?: string;
 }
 
-// ============================================
-// Database Row Types
-// ============================================
-
 export interface DBMessage {
   id: number;
   chat_id: string;
   user_id: string | null;
   user_name: string | null;
-  role: 'user' | 'assistant' | 'system';
+  role: string;
   content: string;
   media_type: string | null;
   media_file_id: string | null;
   caption: string | null;
   transcribed: number;
   transcription: string | null;
-  raw_data: string | null;
   source: string;
   created_at: string;
 }
@@ -170,8 +157,8 @@ export interface DBMessage {
 export interface DBPreference {
   id: number;
   user_id: string;
-  key: string;
-  value: string;
+  pkey: string;
+  pvalue: string;
   category: string;
   updated_at: string;
 }
@@ -180,7 +167,7 @@ export interface DBReminder {
   id: number;
   user_id: string;
   chat_id: string;
-  text: string;
+  remind_text: string;
   remind_at: string;
   created_at: string;
   sent: number;
@@ -200,136 +187,75 @@ export interface DBContact {
   updated_at: string;
 }
 
-export interface DBChatSetting {
+export interface DBBlocked {
   id: number;
   chat_id: string;
-  chat_title: string | null;
-  is_silent: number;
-  is_active: number;
-  ignore_users: string | null;
-  updated_at: string;
+  user_id: string;
+  blocked_by: string;
+  created_at: string;
 }
 
-export interface DBCommandQueue {
+export interface DBQueueItem {
   id: number;
   command_type: string;
   chat_id: string | null;
   payload: string;
-  status: 'pending' | 'processing' | 'done' | 'error';
+  status: string;
   result: string | null;
   error: string | null;
   created_at: string;
   processed_at: string | null;
 }
 
-// ============================================
-// Groq Types
-// ============================================
-
-export interface GroqMessage {
+export interface GroqMsg {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   name?: string;
-  tool_calls?: GroqToolCall[];
-  tool_call_id?: string;
 }
 
-export interface GroqToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-export interface GroqResponse {
+export interface GroqResp {
   id: string;
   choices: Array<{
-    message: GroqMessage;
+    message: GroqMsg;
     finish_reason: string;
-    index: number;
   }>;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
   };
-  error?: {
-    message: string;
-    type: string;
-    code: string;
-  };
 }
 
-// ============================================
-// Command Queue Types
-// ============================================
-
-export type CommandType =
-  | 'send_message'
-  | 'delete_message'
-  | 'edit_message'
-  | 'pin_message'
-  | 'create_group'
-  | 'add_members'
-  | 'remove_member'
-  | 'set_admin'
-  | 'set_reaction'
-  | 'forward_message'
-  | 'get_user_info';
-
-export interface QueueCommand {
-  type: CommandType;
-  chatId?: string;
-  payload: Record<string, unknown>;
-}
-
-// ============================================
-// Internal Types
-// ============================================
-
-export interface ProcessedMessage {
+export interface Parsed {
   chatId: string;
   userId: string;
   userName: string;
   text: string;
-  isTriggered: boolean;
-  triggerType?: 'name' | 'command' | 'mention' | 'reply';
-  cleanedText: string;
+  triggered: boolean;
+  cleanText: string;
   hasVoice: boolean;
   hasPhoto: boolean;
   voiceFileId?: string;
   photoFileId?: string;
-  mediaCaption?: string;
   isGroup: boolean;
-  isFromOwner: boolean;
-  rawMessage: TelegramMessage;
-  businessConnectionId?: string;
+  isOwner: boolean;
+  raw: TgMessage;
+  bizConnId?: string;
 }
 
-export interface LLMActionResponse {
+export interface LLMResponse {
   reply: string;
-  actions?: Array<{
-    type: 'save_preference' | 'set_reminder' | 'change_mode'
-      | 'save_contact' | 'queue_command' | 'set_silent' | 'ignore_user' | 'none';
-    key?: string;
-    value?: string;
-    remind_at?: string;
-    text?: string;
-    mode?: string;
-    contact?: {
-      username?: string;
-      telegram_id?: string;
-      first_name?: string;
-      role?: string;
-      nickname?: string;
-      notes?: string;
-    };
-    command?: QueueCommand;
-    silent?: boolean;
-    ignore_user_id?: string;
-  }>;
-  mood?: string;
-  suggestion?: string;
+  actions?: LLMAction[];
+}
+
+export interface LLMAction {
+  type: 'save_pref' | 'delete_pref' | 'set_reminder' | 'save_contact' | 'block_user' | 'unblock_user' | 'userbot_cmd' | 'change_mode';
+  key?: string;
+  value?: string;
+  remind_at?: string;
+  remind_text?: string;
+  mode?: string;
+  contact?: { telegram_id?: string; username?: string; first_name?: string; role?: string; nickname?: string; notes?: string };
+  block_user_id?: string;
+  userbot?: { type: string; chatId?: string | number; text?: string; messageId?: number; userId?: number; fromChatId?: string | number; toChatId?: string | number };
 }

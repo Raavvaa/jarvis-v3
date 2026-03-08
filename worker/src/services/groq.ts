@@ -1,55 +1,51 @@
-import type { Env, GroqMessage, GroqResponse } from '../types';
-import { GROQ_API_URL } from '../config';
+import type { Env, GroqMsg, GroqResp } from '../types';
+import { GROQ_URL, MODEL_PRIMARY, MODEL_FALLBACK } from '../config';
 import { withRetry } from '../utils/retry';
 
-export class GroqService {
+export class GroqSvc {
   constructor(private env: Env) {}
 
-  async chat(messages: GroqMessage[], options: {
-    model?: string;
-    temperature?: number;
-    maxTokens?: number;
-  } = {}): Promise<GroqResponse> {
+  async chat(msgs: GroqMsg[], opts: { model?: string; temp?: number; max?: number } = {}): Promise<GroqResp> {
     const start = Date.now();
-    const body: Record<string, unknown> = {
-      model: options.model || 'compound-beta',
-      messages,
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
+    const model = opts.model || MODEL_PRIMARY;
+    const body = { model, messages: msgs, temperature: opts.temp ?? 0.7, max_tokens: opts.max ?? 4096 };
+
+    let apiKey = this.env.GROQ_API_KEY;
+    let usedFallback = false;
+
+    const doFetch = async (key: string, mdl: string) => {
+      const b = { ...body, model: mdl };
+      const r = await fetch(GROQ_URL, { method: 'POST', headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`Groq ${r.status}: ${txt.slice(0, 300)}`);
+      }
+      return r.json() as Promise<GroqResp>;
     };
 
-    const result = await withRetry(async () => {
-      const res = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.env.GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text()}`);
-      return res.json() as Promise<GroqResponse>;
-    }, 3, 'Groq');
+    let result: GroqResp;
+    try {
+      result = await withRetry(() => doFetch(apiKey, model), 2, 'Groq-primary');
+    } catch (e) {
+      const msg = (e as Error).message;
+      console.warn(`[Groq] Primary failed: ${msg.slice(0, 100)}, trying fallback`);
+      usedFallback = true;
+      try {
+        result = await withRetry(() => doFetch(this.env.GROQ_API_KEY_2, MODEL_FALLBACK), 2, 'Groq-fallback-key2');
+      } catch {
+        result = await withRetry(() => doFetch(this.env.GROQ_API_KEY, MODEL_FALLBACK), 2, 'Groq-fallback-key1');
+      }
+    }
 
     const ms = Date.now() - start;
-    console.log(`[Groq] ${ms}ms, model=${options.model || 'compound-beta'}, tokens=${result.usage?.total_tokens || '?'}`);
-
-    // Лог (не блокируем)
-    this.env.DB.prepare(
-      `INSERT INTO request_logs (model, tokens_in, tokens_out, latency_ms, source) VALUES (?,?,?,?,?)`
-    ).bind(
-      options.model || 'compound-beta',
-      result.usage?.prompt_tokens || 0,
-      result.usage?.completion_tokens || 0,
-      ms,
-      options.model?.includes('8b') ? 'bot' : 'userbot'
-    ).run().catch(() => {});
-
+    const usedModel = usedFallback ? MODEL_FALLBACK : model;
+    console.log(`[Groq] ${ms}ms model=${usedModel} tokens=${result.usage?.total_tokens || '?'}`);
+    this.env.DB.prepare('INSERT INTO request_logs (model,tokens_in,tokens_out,latency_ms,source) VALUES (?,?,?,?,?)').bind(usedModel, result.usage?.prompt_tokens || 0, result.usage?.completion_tokens || 0, ms, 'bot').run().catch(() => {});
     return result;
   }
 
-  async getCompletion(messages: GroqMessage[], model?: string): Promise<string> {
-    const res = await this.chat(messages, { model });
-    return res.choices?.[0]?.message?.content || '';
+  async complete(msgs: GroqMsg[], model?: string): Promise<string> {
+    const r = await this.chat(msgs, { model });
+    return r.choices?.[0]?.message?.content || '';
   }
 }

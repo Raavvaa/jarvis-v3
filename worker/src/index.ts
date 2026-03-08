@@ -1,67 +1,53 @@
-// ============================================
-// JARVIS Worker v3 — Точка входа
-// ============================================
-
-import type { Env, TelegramUpdate } from './types';
+import type { Env, TgUpdate } from './types';
 import { handleWebhook } from './handlers/webhook';
-import { handleApiRequest } from './api/queue';
+import { handleQueueApi } from './api/queue';
+import { handleDataApi } from './api/data';
 import { handleCron } from './cron';
-import { TelegramService } from './services/telegram';
+import { TgSvc } from './services/telegram';
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(req.url);
     const path = url.pathname;
 
-    // ========================================
-    // /webhook — Telegram Bot Webhook
-    // ========================================
-    if (request.method === 'POST' && path === '/webhook') {
-      const secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
-      if (env.WEBHOOK_SECRET && secret !== env.WEBHOOK_SECRET) {
-        return new Response('Unauthorized', { status: 401 });
-      }
+    // Webhook
+    if (req.method === 'POST' && path === '/webhook') {
+      const secret = req.headers.get('X-Telegram-Bot-Api-Secret-Token');
+      if (env.WEBHOOK_SECRET && secret !== env.WEBHOOK_SECRET) return new Response('Unauthorized', { status: 401 });
       try {
-        const update = (await request.json()) as TelegramUpdate;
+        const update = (await req.json()) as TgUpdate;
         return handleWebhook(update, env, ctx);
-      } catch {
-        return new Response('Bad Request', { status: 400 });
-      }
+      } catch { return new Response('Bad Request', { status: 400 }); }
     }
 
-    // ========================================
-    // /api/* — API для юзербота
-    // ========================================
+    // API (protected)
     if (path.startsWith('/api/')) {
-      return handleApiRequest(request, env);
+      const auth = req.headers.get('Authorization');
+      if (auth !== `Bearer ${env.WORKER_API_SECRET}`) return new Response('Unauthorized', { status: 401 });
+      if (path.startsWith('/api/queue/')) return handleQueueApi(req, env);
+      if (path.startsWith('/api/data/')) return handleDataApi(req, env);
+      return new Response('Not Found', { status: 404 });
     }
 
-    // ========================================
-    // /setup — Установка вебхука
-    // ========================================
+    // Setup webhook
     if (path === '/setup') {
-      const tg = new TelegramService(env);
+      const tg = new TgSvc(env);
       const ok = await tg.setWebhook(`${url.origin}/webhook`, env.WEBHOOK_SECRET);
       const me = await tg.getMe();
       return Response.json({ ok, webhook: `${url.origin}/webhook`, bot: me });
     }
 
-    // ========================================
-    // /health
-    // ========================================
+    // Health
     if (path === '/health') {
-      let dbOk = false;
-      try { await env.DB.prepare('SELECT 1').run(); dbOk = true; } catch {}
-      return Response.json({ status: 'alive', db: dbOk, v: '3.0.0', t: new Date().toISOString() });
+      let db = false;
+      try { await env.DB.prepare('SELECT 1').run(); db = true; } catch {}
+      return Response.json({ status: 'alive', db, v: '4.0.0', t: new Date().toISOString() });
     }
 
-    return Response.json({
-      name: 'JARVIS v3',
-      endpoints: ['/webhook', '/api/*', '/setup', '/health'],
-    });
+    return Response.json({ name: 'JARVIS v4', endpoints: ['/webhook', '/api/*', '/setup', '/health'] });
   },
 
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(_ev: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(handleCron(env));
   },
 };

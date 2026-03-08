@@ -1,49 +1,42 @@
-// ============================================
-// JARVIS Userbot — Точка входа
-// ============================================
-
-import { createClient, startQueueProcessor } from './client.js';
+import { createClient } from './client.js';
 import { setupHandlers } from './handler.js';
-import { CONFIG } from './config.js';
+import { startPoller } from './poller.js';
+import { CFG } from './config.js';
 
 async function main() {
   console.log(`
 ╔═══════════════════════════════════════╗
-║   🤖 JARVIS Userbot v3.0             ║
+║   🤖 JARVIS Userbot v4.0             ║
 ║   MTProto + Cloudflare Workers        ║
 ╚═══════════════════════════════════════╝
   `);
 
-  // Проверяем наличие сессии
-  if (!CONFIG.sessionString) {
-    console.error('❌ SESSION_STRING не найден!');
-    console.error('   Запусти: npm run auth');
+  if (!CFG.session) {
+    console.error('❌ SESSION_STRING not found!');
+    console.error('   Run: npm run auth');
     process.exit(1);
   }
 
-  // Подключаемся
   const client = await createClient();
 
-  // Регистрируем обработчики сообщений
+  // Register message handlers (reads all messages, responds to owner)
   setupHandlers(client);
 
-  // Запускаем обработчик очереди команд
-  await startQueueProcessor(client);
+  // Start polling worker queue for commands
+  startPoller(client);
 
   console.log(`
-✅ JARVIS Userbot запущен и работает!
+✅ JARVIS Userbot is running!
 
-📡 Worker URL: ${CONFIG.workerUrl}
-👤 Owner ID: ${CONFIG.myTelegramId}
-🕐 Timezone: UTC+${CONFIG.timezoneOffset}
+📡 Worker: ${CFG.workerUrl}
+👤 Owner: ${CFG.myId}
+🕐 TZ: UTC+${CFG.tz}
 
-Команды в Telegram:
-  • "Джарвис, ..." — в любом чате
-  • Просто текст — в Saved Messages
-  • "Джарвис, не общайся" — заглушить в чате
+Triggers: джарвис, jarvis, бро, /j, /ask
+Saved Messages: always active (no trigger)
   `);
 
-  // Держим процесс живым
+  // Keep alive
   process.on('SIGINT', async () => {
     console.log('\n🔌 Disconnecting...');
     await client.disconnect();
@@ -51,12 +44,18 @@ async function main() {
   });
 
   process.on('SIGTERM', async () => {
+    console.log('\n🔌 Disconnecting (SIGTERM)...');
     await client.disconnect();
     process.exit(0);
   });
+
+  // Prevent unhandled rejections from crashing
+  process.on('unhandledRejection', (reason) => {
+    console.error('[UNHANDLED]', reason);
+  });
 }
 
-main().catch((error) => {
-  console.error('💥 Fatal error:', error);
+main().catch((e) => {
+  console.error('💥 Fatal:', e);
   process.exit(1);
 });

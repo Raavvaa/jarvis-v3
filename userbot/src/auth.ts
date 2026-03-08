@@ -1,37 +1,31 @@
-// ============================================
-// Скрипт авторизации — запускается один раз
-// Генерирует SESSION_STRING для .env
-// ============================================
-
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import input from 'input';
-import { CONFIG } from './config.js';
+import { CFG } from './config.js';
 
 async function main() {
-  console.log('🔑 Авторизация в Telegram...\n');
-  console.log('API_ID:', CONFIG.apiId);
-  console.log('API_HASH:', CONFIG.apiHash.slice(0, 8) + '...\n');
+  console.log('🔑 Telegram MTProto Authorization\n');
+  console.log('API_ID:', CFG.apiId);
+  console.log('API_HASH:', CFG.apiHash.slice(0, 8) + '...\n');
 
   const session = new StringSession('');
-  const client = new TelegramClient(session, CONFIG.apiId, CONFIG.apiHash, {
-    connectionRetries: 5,
-  });
+  const client = new TelegramClient(session, CFG.apiId, CFG.apiHash, { connectionRetries: 5 });
 
   await client.start({
-    phoneNumber: async () => await input.text('📱 Номер телефона (с кодом страны): '),
-    password: async () => await input.text('🔒 Пароль 2FA (если есть, иначе Enter): '),
-    phoneCode: async () => await input.text('📨 Код из Telegram: '),
-    onError: (err) => console.error('Ошибка:', err),
+    phoneNumber: async () => await input.text('📱 Phone number (with country code): '),
+    password: async () => await input.text('🔒 2FA password (or press Enter): '),
+    phoneCode: async () => await input.text('📨 Code from Telegram: '),
+    onError: (err: Error) => console.error('Error:', err.message),
   });
 
-  console.log('\n✅ Авторизация успешна!');
-  console.log('\n📋 Скопируй эту строку сессии в .env (SESSION_STRING):\n');
-  console.log(client.session.save());
-  console.log('\n⚠️ НИКОМУ не показывай эту строку! Она даёт полный доступ к аккаунту.');
+  console.log('\n✅ Authorization successful!');
+  console.log('\n📋 Copy this SESSION_STRING to your .env:\n');
+  const saved = client.session.save() as unknown as string;
+  console.log(saved);
+  console.log('\n⚠️ NEVER share this string. It gives full access to your account.');
 
   await client.disconnect();
   process.exit(0);
 }
 
-main().catch(console.error);
+main().catch(e => { console.error('Fatal:', e); process.exit(1); });

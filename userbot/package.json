@@ -1,7 +1,6 @@
 {
   "name": "jarvis-userbot",
-  "version": "3.0.0",
-  "description": "JARVIS Userbot — MTProto client",
+  "version": "4.0.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -13,7 +12,8 @@
   "dependencies": {
     "telegram": "^2.26.8",
     "input": "^1.0.1",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "big-integer": "^1.6.52"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

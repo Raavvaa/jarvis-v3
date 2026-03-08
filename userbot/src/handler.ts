@@ -1,177 +1,113 @@
-// ============================================
-// Обработчик сообщений юзербота
-// ============================================
-
 import { TelegramClient } from 'telegram';
 import { Api } from 'telegram/tl/index.js';
-import { NewMessage, NewMessageEvent } from 'telegram/events/index.js';
-import { CONFIG, TRIGGER_WORDS, TRIGGER_COMMANDS } from './config.js';
-import * as workerApi from './worker-api.js';
-import * as actions from './actions.js';
+import { NewMessage, type NewMessageEvent } from 'telegram/events/index.js';
+import { CFG } from './config.js';
 
-/**
- * Проверяет, является ли сообщение от хозяина
- */
-function isFromOwner(event: NewMessageEvent): boolean {
-  const senderId = event.message.senderId?.toString();
-  return senderId === CONFIG.myTelegramId;
+const workerHeaders = {
+  'Authorization': `Bearer ${CFG.workerSecret}`,
+  'Content-Type': 'application/json',
+};
+
+const TRIGGERS = ['джарвис', 'jarvis', 'бро', 'братан'];
+const TRIGGER_CMDS = ['/j ', '/ask '];
+
+function checkTrigger(text: string): { hit: boolean; clean: string } {
+  const lo = text.toLowerCase().trim();
+  for (const c of TRIGGER_CMDS) {
+    if (lo.startsWith(c.trim())) return { hit: true, clean: text.slice(c.length).trim() };
+  }
+  for (const t of TRIGGERS) {
+    if (lo.startsWith(t)) return { hit: true, clean: text.slice(t.length).replace(/^[,:\s]+/, '').trim() || text };
+  }
+  return { hit: false, clean: text };
 }
 
-/**
- * Проверяет триггер в тексте
- */
-function checkTrigger(text: string): { triggered: boolean; cleanText: string } {
-  const lower = text.toLowerCase().trim();
-
-  for (const cmd of TRIGGER_COMMANDS) {
-    if (lower.startsWith(cmd.trim())) {
-      return { triggered: true, cleanText: text.slice(cmd.length).trim() };
-    }
-  }
-
-  for (const word of TRIGGER_WORDS) {
-    if (lower.startsWith(word)) {
-      return {
-        triggered: true,
-        cleanText: text.slice(word.length).replace(/^[,:\s]+/, '').trim() || text,
-      };
-    }
-  }
-
-  return { triggered: false, cleanText: text };
-}
-
-/**
- * Скачивает медиа из сообщения
- */
-async function downloadMedia(client: TelegramClient, message: Api.Message): Promise<Buffer | null> {
-  try {
-    const buffer = await client.downloadMedia(message, {});
-    return buffer as Buffer;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Основной обработчик сообщений
- */
 export function setupHandlers(client: TelegramClient): void {
   client.addEventHandler(async (event: NewMessageEvent) => {
     try {
-      await handleMessage(client, event);
-    } catch (error) {
-      console.error('[Handler] Error:', (error as Error).message);
+      await handleMsg(client, event);
+    } catch (e) {
+      console.error('[Handler]', (e as Error).message);
     }
   }, new NewMessage({}));
-
   console.log('✅ Message handlers registered');
 }
 
-async function handleMessage(client: TelegramClient, event: NewMessageEvent): Promise<void> {
-  const message = event.message;
-  const text = message.text || '';
-  const chatId = message.chatId?.toString() || '';
-  const senderId = message.senderId?.toString() || '';
-  const isOwner = isFromOwner(event);
-
-  // Определяем тип чата
-  const chat = await message.getChat();
-  const isPrivate = message.isPrivate;
+async function handleMsg(client: TelegramClient, event: NewMessageEvent): Promise<void> {
+  const msg = event.message;
+  const text = msg.text || '';
+  const chatId = msg.chatId?.toString() || '';
+  const senderId = msg.senderId?.toString() || '';
+  const isOwner = senderId === CFG.myId;
+  const isPrivate = msg.isPrivate;
   const isGroup = !isPrivate;
-  const chatTitle = (chat as Api.Chat | Api.Channel)?.title || '';
 
-  // Получаем имя отправителя
+  // Get sender name
   let senderName = 'Unknown';
   try {
-    const sender = await message.getSender();
+    const sender = await msg.getSender();
     if (sender instanceof Api.User) {
       senderName = [sender.firstName, sender.lastName].filter(Boolean).join(' ');
     }
   } catch {}
 
-  // ========================================
-  // 1. Сохраняем ВСЕ сообщения в историю
-  // ========================================
-  const hasVoice = !!(message.voice || message.audio);
-  const hasPhoto = !!message.photo;
+  // Get chat title for groups
+  let chatTitle = '';
+  try {
+    const chat = await msg.getChat();
+    if (chat && 'title' in chat) chatTitle = (chat as any).title || '';
+  } catch {}
 
-  await workerApi.saveMessage({
+  // Save ALL messages to worker DB for context
+  const hasVoice = !!(msg.voice || msg.audio);
+  await saveToWorker({
     chatId,
     userId: senderId,
     userName: senderName,
-    content: text || (hasVoice ? '' : message.message || ''),
+    content: text,
     role: 'user',
-    mediaType: hasVoice ? 'voice' : hasPhoto ? 'photo' : undefined,
-    caption: text && hasVoice ? text : undefined,
+    mediaType: hasVoice ? 'voice' : msg.photo ? 'photo' : undefined,
+    source: 'userbot',
   });
 
-  // ========================================
-  // 2. Проверяем, нужно ли реагировать
-  // ========================================
-
-  // Только хозяин может активировать юзербота
+  // Only respond to owner
   if (!isOwner) return;
 
-  // В Saved Messages (чат с самим собой) — отвечаем на всё
-  const isSavedMessages = isPrivate && senderId === CONFIG.myTelegramId;
+  // Saved Messages (self chat): always respond
+  const isSelf = isPrivate && senderId === CFG.myId;
 
-  // Проверяем триггер
-  const { triggered, cleanText } = checkTrigger(text);
+  const { hit, clean } = checkTrigger(text);
 
-  // Не активирован и не Saved Messages — выходим
-  if (!triggered && !isSavedMessages) return;
+  // Not triggered and not self-chat: skip
+  if (!hit && !isSelf) return;
 
-  // ========================================
-  // 3. Проверяем настройки чата
-  // ========================================
-  if (isGroup) {
-    const settings = await workerApi.getChatSettings(chatId);
-    if (settings.is_silent) {
-      console.log(`[Handler] Chat ${chatId} is silenced, skipping`);
-      return;
-    }
-  }
+  const processedText = isSelf ? text : clean;
+  if (!processedText) return;
 
-  // ========================================
-  // 4. Обрабатываем голосовое (если есть)
-  // ========================================
-  let processedText = isSavedMessages ? text : cleanText;
-
+  // Voice handling
+  let finalText = processedText;
   if (hasVoice) {
-    console.log('[Handler] Processing voice message...');
-    const mediaBuffer = await downloadMedia(client, message);
-    if (mediaBuffer) {
-      const transcription = await workerApi.transcribeAudio(mediaBuffer);
-      if (transcription) {
-        processedText = transcription + (processedText ? `\n(подпись: ${processedText})` : '');
-        console.log(`[Handler] Transcribed: "${transcription.slice(0, 80)}..."`);
+    console.log('[Handler] Transcribing voice...');
+    try {
+      const mediaBuf = await client.downloadMedia(msg, {}) as Buffer;
+      if (mediaBuf) {
+        const txRes = await fetch(`${CFG.workerUrl}/api/data/transcribe`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${CFG.workerSecret}`, 'Content-Type': 'application/octet-stream' },
+          body: mediaBuf,
+        });
+        if (txRes.ok) {
+          const txData = await txRes.json() as { text?: string };
+          if (txData.text) {
+            finalText = txData.text + (processedText ? `\n(подпись: ${processedText})` : '');
+            console.log(`[Handler] Transcribed: "${txData.text.slice(0, 80)}"`);
+          }
+        }
       }
-    }
+    } catch (e) { console.error('[Handler] Voice tx:', (e as Error).message); }
   }
 
-  if (!processedText || processedText.length === 0) {
-    processedText = '[пустое сообщение]';
-  }
-
-  // ========================================
-  // 5. Проверяем, просит ли расшифровать бэклог
-  // ========================================
-  const wantsTranscription = processedText.match(
-    /прослушай|расшифруй|послушай|транскрибируй|что.в.голосов/i
-  );
-
-  if (wantsTranscription) {
-    await actions.sendMessage(client, chatId, '🎤 Расшифровываю голосовые...');
-    // TODO: тут нужно найти голосовые через Worker API и расшифровать
-    // Пока заглушка
-    await actions.sendMessage(client, chatId, '✅ Готово! Задай вопрос, и я отвечу с учётом расшифровок.');
-    return;
-  }
-
-  // ========================================
-  // 6. Отправляем "typing..."
-  // ========================================
+  // Show typing
   try {
     await client.invoke(new Api.messages.SetTyping({
       peer: await client.getInputEntity(chatId),
@@ -179,84 +115,80 @@ async function handleMessage(client: TelegramClient, event: NewMessageEvent): Pr
     }));
   } catch {}
 
-  // ========================================
-  // 7. Запрашиваем ответ от LLM через Worker
-  // ========================================
-  console.log(`[Handler] Requesting LLM for chat ${chatId}: "${processedText.slice(0, 80)}..."`);
+  // Request LLM response from worker
+  console.log(`[Handler] LLM request for "${finalText.slice(0, 80)}..."`);
 
-  const response = await workerApi.requestChat({
-    chatId,
-    userId: senderId,
-    userName: senderName,
-    text: processedText,
-    isPrivate,
-    chatTitle: chatTitle || undefined,
-  });
+  try {
+    // Get history + prefs + contacts from worker, build messages, call groq... 
+    // Actually, we'll use the worker's /api/data endpoints to get context, 
+    // then call Groq directly or via worker. Let's build a dedicated chat endpoint.
 
-  // ========================================
-  // 8. Отправляем ответ от имени хозяина
-  // ========================================
-  if (response.reply) {
-    // Разбиваем длинные сообщения
-    const maxLen = 4096;
-    const reply = response.reply;
+    const chatRes = await fetch(`${CFG.workerUrl}/api/data/history`, {
+      method: 'POST',
+      headers: workerHeaders,
+      body: JSON.stringify({ chatId, limit: 30 }),
+    });
+    const history = chatRes.ok ? await chatRes.json() as Array<{ role: string; content: string; user_name?: string; transcription?: string; media_type?: string; caption?: string }> : [];
 
-    if (reply.length <= maxLen) {
-      await actions.sendMessage(client, chatId, reply);
-    } else {
-      // Разбиваем по абзацам
-      const parts: string[] = [];
-      let cur = '';
-      for (const p of reply.split('\n\n')) {
-        if ((cur + '\n\n' + p).length > maxLen) {
-          if (cur) parts.push(cur.trim());
-          cur = p;
-        } else {
-          cur = cur ? cur + '\n\n' + p : p;
-        }
-      }
-      if (cur) parts.push(cur.trim());
+    const prefsRes = await fetch(`${CFG.workerUrl}/api/data/prefs?userId=${CFG.myId}`, { headers: workerHeaders });
+    const prefs = prefsRes.ok ? await prefsRes.json() as Record<string, string> : {};
 
-      for (const part of parts) {
-        await actions.sendMessage(client, chatId, part);
-        await sleep(300);
-      }
+    const contactsRes = await fetch(`${CFG.workerUrl}/api/data/contacts`, { headers: workerHeaders });
+    const contacts = contactsRes.ok ? await contactsRes.json() as Array<{ nickname?: string; role?: string; username?: string; first_name?: string }> : [];
+
+    // Build system prompt (same logic as worker ownerSystemPrompt)
+    const prefsStr = Object.entries(prefs).length > 0 ? '\n\nФакты о хозяине:\n' + Object.entries(prefs).map(([k, v]) => `- ${k}: ${v}`).join('\n') : '';
+    const contactsStr = contacts.length > 0 ? '\n\nКонтакты:\n' + contacts.map((x: any) => `- ${x.nickname || x.first_name || '?'} (${x.role || '?'}${x.username ? ', @' + x.username : ''})`).join('\n') : '';
+
+    const sysPrompt = `Ты — Джарвис, персональный ИИ-ассистент Равиля.
+Как Джарвис у Тони Старка — умный, преданный, с юмором, называешь его "сэр".
+Равиль — твой хозяин. ID: 1344488824. Город: Москва.
+Ты пишешь ОТ ИМЕНИ хозяина — сообщения идут от его аккаунта.
+${isGroup ? `Ты в групповом чате "${chatTitle}".` : 'Ты в личном чате с хозяином.'}
+
+ПРАВИЛА:
+1. Кратко — 1-3 предложения.
+2. НИКОМУ кроме хозяина не раскрывай его данные.
+3. Можешь выполнять действия через userbot_cmd.
+4. Отвечай на языке вопроса.
+${prefsStr}${contactsStr}
+
+ФОРМАТ (СТРОГО JSON):
+{
+  "reply": "текст",
+  "actions": [
+    {"type": "save_pref", "key": "...", "value": "..."},
+    {"type": "set_reminder", "remind_at": "ISO UTC", "remind_text": "..."},
+    {"type": "save_contact", "contact": {"username": "...", "first_name": "...", "role": "...", "nickname": "..."}},
+    {"type": "userbot_cmd", "userbot": {"type": "send_message", "chatId": "@user", "text": "..."}},
+    {"type": "userbot_cmd", "userbot": {"type": "send_to_saved", "text": "..."}}
+  ]
+}
+Если действий нет: "actions": [].
+Время UTC: ${new Date().toISOString()}`;
+
+    // Convert history to messages
+    const groqMsgs: Array<{ role: string; content: string }> = [{ role: 'system', content: sysPrompt }];
+    const histSlice = history.slice(-28);
+    for (const h of histSlice) {
+      let c = h.content;
+      if (h.transcription) c = `[🎤 Голосовое]: ${h.transcription}`;
+      else if (h.media_type === 'voice') c = '[🎤 Голосовое]';
+      else if (h.media_type === 'photo') c = `[📷 Фото${h.caption ? ': ' + h.caption : ''}]`;
+      if (h.role === 'user' && h.user_name) c = `[${h.user_name}]: ${c}`;
+      groqMsgs.push({ role: h.role === 'assistant' ? 'assistant' : 'user', content: c || '[пусто]' });
+    }
+    groqMsgs.push({ role: 'user', content: finalText });
+
+    // Call Groq directly (userbot has its own connection)
+    const groqRes = await callGroq(groqMsgs);
+
+    if (!groqRes) {
+      console.error('[Handler] Empty Groq response');
+      return;
     }
 
-    // Сохраняем ответ в историю
-    await workerApi.saveMessage({
-      chatId,
-      userId: CONFIG.myTelegramId,
-      userName: 'Джарвис (от моего имени)',
-      content: response.reply,
-      role: 'assistant',
-    });
-  }
-
-  // ========================================
-  // 9. Выводим подсказку (в Saved Messages)
-  // ========================================
-  if (response.suggestion && !isSavedMessages) {
+    // Parse response
+    let parsed: { reply: string; actions?: Array<Record<string, any>> };
     try {
-      // Отправляем подсказку себе в Saved Messages
-      await actions.sendMessage(client, 'me', `💡 Подсказка (чат: ${chatTitle || chatId}):\n${response.suggestion}`);
-    } catch {}
-  }
-
-  if (response.mood && response.mood !== 'neutral' && !isSavedMessages) {
-    const moodEmoji: Record<string, string> = {
-      happy: '😊', sad: '😢', angry: '😡', anxious: '😰', excited: '🔥'
-    };
-    try {
-      await actions.sendMessage(
-        client,
-        'me',
-        `${moodEmoji[response.mood] || '🤔'} Настроение собеседника: ${response.mood} (чат: ${chatTitle || chatId})`
-      );
-    } catch {}
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
-}
+      const cleaned = groqRes.replace(/^

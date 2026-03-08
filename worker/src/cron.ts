@@ -1,31 +1,22 @@
 import type { Env } from './types';
-import { TelegramService } from './services/telegram';
-import { RemindersService } from './services/reminders';
-import { formatDateTime } from './utils/date-parser';
+import { TgSvc } from './services/telegram';
+import { RemSvc } from './services/reminders';
+import { fmtDt } from './utils/date-parser';
 
 export async function handleCron(env: Env): Promise<void> {
-  const reminders = new RemindersService(env.DB);
-  const tg = new TelegramService(env);
+  const rem = new RemSvc(env.DB);
+  const tg = new TgSvc(env);
   const tz = parseInt(env.TIMEZONE_OFFSET || '3', 10);
-
-  const due = await reminders.getDue();
-  if (due.length === 0) return;
-
-  console.log(`[Cron] ${due.length} reminders due`);
-
-  for (const r of due) {
+  const list = await rem.due();
+  if (list.length === 0) return;
+  console.log(`[Cron] ${list.length} reminders due`);
+  for (const r of list) {
     try {
-      await tg.sendMessage(r.chat_id,
-        `⏰ Напоминание!\n\n${r.text}\n\n🕐 ${formatDateTime(r.remind_at, tz)}`
-      );
-      await reminders.markSent(r.id);
+      await tg.send(r.chat_id, `⏰ Напоминание, сэр!\n\n${r.remind_text}\n\n🕐 ${fmtDt(r.remind_at, tz)}`);
+      await rem.markSent(r.id);
     } catch (e) {
-      console.error(`[Cron] Reminder ${r.id}:`, (e as Error).message);
-      // Fallback: отправляем хозяину в личку
-      try {
-        await tg.sendMessage(env.MY_TELEGRAM_ID, `⏰ ${r.text}`);
-        await reminders.markSent(r.id);
-      } catch {}
+      console.error(`[Cron] ${r.id}:`, (e as Error).message);
+      try { await tg.send(env.MY_TELEGRAM_ID, `⏰ ${r.remind_text}`); await rem.markSent(r.id); } catch {}
     }
   }
 }
