@@ -1,0 +1,19 @@
+{
+  "name": "jarvis-worker",
+  "version": "3.0.0",
+  "description": "JARVIS Worker — Bot API + Queue API",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create jarvis-db",
+    "db:migrate": "wrangler d1 migrations apply jarvis-db",
+    "db:migrate:local": "wrangler d1 migrations apply jarvis-db --local",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}
